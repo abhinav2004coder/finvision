@@ -70,7 +70,7 @@ export function filterTransactionsByMonth(transactions: Transaction[], date: Dat
 export function calculateBudgetUtilization(budgets: Budget[], transactions: Transaction[]): Budget[] {
   return budgets.map(budget => {
     const spent = transactions
-      .filter(t => t.type === 'expense' && t.category === budget.category)
+      .filter(t => t.type === 'EXPENSE' && t.category === budget.category)
       .reduce((sum, t) => sum + t.amount, 0);
     
     return {

@@ -52,7 +52,7 @@ export default function InsightsPage() {
     return [0, 1, 2].reverse().map(monthsAgo => {
       const date = subMonths(new Date(), monthsAgo);
       const transactions = filterTransactionsByMonth(data.transactions, date);
-      const expenses = transactions.filter(t => t.type === 'expense');
+      const expenses = transactions.filter(t => t.type === 'EXPENSE');
       const total = expenses.reduce((sum, t) => sum + t.amount, 0);
       
       return {
