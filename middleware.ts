@@ -11,7 +11,19 @@ export async function middleware(request: NextRequest) {
   const isProtectedRoute = protectedRoutes.some(route => pathname.startsWith(route));
   const isAuthRoute = authRoutes.some(route => pathname.startsWith(route));
   
-  const session = await verifySession();
+  let session = null;
+  try {
+    session = await verifySession();
+  } catch (error) {
+    // If verification fails, clear the invalid cookie
+    console.error('Session verification error:', error);
+    const response = NextResponse.redirect(new URL('/login', request.url));
+    response.cookies.delete('auth-token');
+    if (isProtectedRoute) {
+      return response;
+    }
+    return NextResponse.next();
+  }
   
   // Redirect to login if accessing protected route without session
   if (isProtectedRoute && !session) {
