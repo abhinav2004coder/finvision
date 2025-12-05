@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import Card from '@/components/Card';
 import { 
   Brain, 
@@ -10,57 +10,189 @@ import {
   CheckCircle, 
   Info,
   Lightbulb,
-  BarChart3
+  BarChart3,
+  Loader2
 } from 'lucide-react';
 import { 
-  generateSampleData, 
-  formatCurrency,
-  generateAIInsights,
-  calculateBudgetUtilization,
-  filterTransactionsByMonth,
-  predictFutureExpenses,
-  groupByCategory
+  formatCurrency
 } from '@/lib/utils';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar } from 'recharts';
 import { subMonths, format } from 'date-fns';
 
+// AI Insights API types
+interface SpendingPattern {
+  category: string;
+  totalAmount: number;
+  transactionCount: number;
+  averageAmount: number;
+  percentage: number;
+}
+
+interface BudgetRecommendation {
+  category: string;
+  recommendedAmount: number;
+  currentSpending: number;
+  reason: string;
+  priority: 'high' | 'medium' | 'low';
+}
+
+interface AnomalyDetection {
+  transactionId: string;
+  amount: number;
+  category: string;
+  date: string;
+  anomalyScore: number;
+  reason: string;
+}
+
+interface CategoryHealth {
+  category: string;
+  status: 'good' | 'warning' | 'bad';
+  reason: string;
+  spending: number;
+  recommendation: string;
+}
+
+interface IncomeVsExpense {
+  totalIncome: number;
+  totalExpense: number;
+  netBalance: number;
+  savingsRate: number;
+  status: 'healthy' | 'concerning' | 'critical';
+}
+
+interface AIInsightsResponse {
+  userId: string;
+  incomeVsExpense: IncomeVsExpense;
+  spendingPatterns: SpendingPattern[];
+  categoryHealth: CategoryHealth[];
+  budgetRecommendations: BudgetRecommendation[];
+  anomalies: AnomalyDetection[];
+  totalSpending: number;
+  averageDailySpending: number;
+  projectedMonthlySpending: number;
+  savingsOpportunities: string[];
+}
+
 export default function InsightsPage() {
-  const [data] = useState(() => generateSampleData());
+  const [aiInsights, setAiInsights] = useState<AIInsightsResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [userId, setUserId] = useState<string | null>(null);
   
-  const currentMonthTransactions = useMemo(() => 
-    filterTransactionsByMonth(data.transactions, new Date()),
-    [data.transactions]
-  );
+  // Fetch current user
+  useEffect(() => {
+    async function fetchUser() {
+      try {
+        const res = await fetch('/api/auth/me');
+        if (res.ok) {
+          const data = await res.json();
+          setUserId(data.user.id);
+        } else {
+          setError('Please log in to view insights');
+          setLoading(false);
+        }
+      } catch (err) {
+        setError('Failed to fetch user data');
+        setLoading(false);
+      }
+    }
+    fetchUser();
+  }, []);
   
-  const budgets = useMemo(() => 
-    calculateBudgetUtilization(data.budgets, currentMonthTransactions),
-    [data.budgets, currentMonthTransactions]
-  );
-  
-  const insights = useMemo(() => 
-    generateAIInsights(data.transactions, budgets),
-    [data.transactions, budgets]
-  );
-  
-  const predictions = useMemo(() => 
-    predictFutureExpenses(data.transactions),
-    [data.transactions]
-  );
-  
-  // Generate spending trend data for last 3 months
-  const spendingTrend = useMemo(() => {
-    return [0, 1, 2].reverse().map(monthsAgo => {
-      const date = subMonths(new Date(), monthsAgo);
-      const transactions = filterTransactionsByMonth(data.transactions, date);
-      const expenses = transactions.filter(t => t.type === 'EXPENSE');
-      const total = expenses.reduce((sum, t) => sum + t.amount, 0);
+  // Fetch AI insights when userId is available
+  useEffect(() => {
+    async function fetchInsights() {
+      if (!userId) return;
       
-      return {
-        month: format(date, 'MMM'),
-        amount: total
-      };
+      try {
+        setLoading(true);
+        const aiServiceUrl = process.env.NEXT_PUBLIC_AI_SERVICE_URL || 'http://localhost:8000';
+        const res = await fetch(`${aiServiceUrl}/api/v1/insights/user/${userId}`);
+        
+        if (!res.ok) {
+          throw new Error('Failed to fetch insights from AI service');
+        }
+        
+        const data = await res.json();
+        setAiInsights(data);
+        setError(null);
+      } catch (err) {
+        console.error('Error fetching AI insights:', err);
+        setError('Failed to load AI insights. Make sure the AI service is running.');
+      } finally {
+        setLoading(false);
+      }
+    }
+    
+    fetchInsights();
+  }, [userId]);
+  
+  // Convert AI insights to display format
+  const insights = useMemo(() => {
+    if (!aiInsights) return [];
+    
+    const result: Array<{
+      id: string;
+      type: 'warning' | 'success' | 'prediction' | 'info';
+      title: string;
+      description: string;
+      impact: 'high' | 'medium' | 'low';
+    }> = [];
+    
+    // Add budget recommendations as insights
+    aiInsights.budgetRecommendations.forEach((rec, idx) => {
+      if (rec.priority === 'high' || rec.priority === 'medium') {
+        result.push({
+          id: `budget-${idx}`,
+          type: 'warning',
+          title: `${rec.category} Budget Alert`,
+          description: rec.reason,
+          impact: rec.priority as 'high' | 'medium' | 'low'
+        });
+      }
     });
-  }, [data.transactions]);
+    
+    // Add anomalies as insights
+    aiInsights.anomalies.slice(0, 3).forEach((anomaly, idx) => {
+      result.push({
+        id: `anomaly-${idx}`,
+        type: 'warning',
+        title: `Unusual ${anomaly.category} Transaction`,
+        description: anomaly.reason,
+        impact: 'medium'
+      });
+    });
+    
+    return result;
+  }, [aiInsights]);
+  
+  // Generate spending trend data
+  const spendingTrend = useMemo(() => {
+    if (!aiInsights || !aiInsights.spendingPatterns.length) return [];
+    
+    // Create simple trend based on patterns
+    const currentSpending = aiInsights.totalSpending;
+    const avgSpending = aiInsights.averageDailySpending * 30;
+    
+    return [
+      { month: format(subMonths(new Date(), 2), 'MMM'), amount: avgSpending * 0.9 },
+      { month: format(subMonths(new Date(), 1), 'MMM'), amount: avgSpending * 0.95 },
+      { month: format(new Date(), 'MMM'), amount: currentSpending }
+    ];
+  }, [aiInsights]);
+  
+  // Generate predictions from spending patterns
+  const predictions = useMemo(() => {
+    if (!aiInsights || !aiInsights.spendingPatterns.length) return [];
+    
+    return aiInsights.spendingPatterns.map(pattern => ({
+      category: pattern.category,
+      averageSpending: pattern.averageAmount,
+      prediction: pattern.averageAmount * pattern.transactionCount * 1.05,
+      trend: pattern.percentage > 20 ? 'increasing' : 'stable'
+    }));
+  }, [aiInsights]);
   
   const getInsightIcon = (type: string) => {
     switch (type) {
@@ -99,6 +231,40 @@ export default function InsightsPage() {
     }
   };
   
+  if (loading) {
+    return (
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <div className="flex flex-col items-center justify-center min-h-[60vh]">
+          <Loader2 className="animate-spin text-blue-600 dark:text-blue-400 mb-4" size={48} />
+          <p className="text-zinc-600 dark:text-zinc-400">Loading AI insights...</p>
+        </div>
+      </div>
+    );
+  }
+  
+  if (error) {
+    return (
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <Card className="bg-red-50 dark:bg-red-900/10 border-red-200 dark:border-red-800">
+          <div className="flex items-start gap-3">
+            <AlertTriangle className="text-red-600 dark:text-red-400 flex-shrink-0" size={24} />
+            <div>
+              <h3 className="font-semibold text-red-900 dark:text-red-100 mb-1">Error Loading Insights</h3>
+              <p className="text-red-700 dark:text-red-300">{error}</p>
+              <p className="text-sm text-red-600 dark:text-red-400 mt-2">
+                Make sure the AI insights service is running on port 8000.
+              </p>
+            </div>
+          </div>
+        </Card>
+      </div>
+    );
+  }
+  
+  if (!aiInsights) {
+    return null;
+  }
+  
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
       <div className="mb-8">
@@ -112,6 +278,114 @@ export default function InsightsPage() {
           Intelligent analysis of your spending patterns and personalized recommendations
         </p>
       </div>
+      
+      {/* Income vs Expense Comparison */}
+      <Card 
+        title="Income vs Expense" 
+        subtitle="Your financial overview"
+        className={`mb-8 border-l-4 ${
+          aiInsights.incomeVsExpense.status === 'healthy' ? 'border-l-green-500' :
+          aiInsights.incomeVsExpense.status === 'concerning' ? 'border-l-amber-500' :
+          'border-l-red-500'
+        }`}
+      >
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+          <div className="text-center">
+            <p className="text-sm text-zinc-600 dark:text-zinc-400 mb-1">Total Income</p>
+            <p className="text-2xl font-bold text-green-600 dark:text-green-400">
+              {formatCurrency(aiInsights.incomeVsExpense.totalIncome)}
+            </p>
+          </div>
+          <div className="text-center">
+            <p className="text-sm text-zinc-600 dark:text-zinc-400 mb-1">Total Expense</p>
+            <p className="text-2xl font-bold text-red-600 dark:text-red-400">
+              {formatCurrency(aiInsights.incomeVsExpense.totalExpense)}
+            </p>
+          </div>
+          <div className="text-center">
+            <p className="text-sm text-zinc-600 dark:text-zinc-400 mb-1">Net Balance</p>
+            <p className={`text-2xl font-bold ${
+              aiInsights.incomeVsExpense.netBalance >= 0 
+                ? 'text-green-600 dark:text-green-400' 
+                : 'text-red-600 dark:text-red-400'
+            }`}>
+              {formatCurrency(aiInsights.incomeVsExpense.netBalance)}
+            </p>
+          </div>
+          <div className="text-center">
+            <p className="text-sm text-zinc-600 dark:text-zinc-400 mb-1">Savings Rate</p>
+            <p className={`text-2xl font-bold ${
+              aiInsights.incomeVsExpense.savingsRate >= 20 ? 'text-green-600 dark:text-green-400' :
+              aiInsights.incomeVsExpense.savingsRate >= 10 ? 'text-amber-600 dark:text-amber-400' :
+              'text-red-600 dark:text-red-400'
+            }`}>
+              {aiInsights.incomeVsExpense.savingsRate.toFixed(1)}%
+            </p>
+          </div>
+        </div>
+        <div className="mt-4 pt-4 border-t border-zinc-200 dark:border-zinc-700">
+          <div className={`flex items-center gap-2 ${
+            aiInsights.incomeVsExpense.status === 'healthy' ? 'text-green-600 dark:text-green-400' :
+            aiInsights.incomeVsExpense.status === 'concerning' ? 'text-amber-600 dark:text-amber-400' :
+            'text-red-600 dark:text-red-400'
+          }`}>
+            {aiInsights.incomeVsExpense.status === 'healthy' ? <CheckCircle size={20} /> :
+             aiInsights.incomeVsExpense.status === 'concerning' ? <AlertTriangle size={20} /> :
+             <AlertTriangle size={20} />}
+            <span className="font-semibold capitalize">{aiInsights.incomeVsExpense.status} Financial Status</span>
+          </div>
+        </div>
+      </Card>
+
+      {/* Category Health Assessment */}
+      {aiInsights.categoryHealth.length > 0 && (
+        <Card title="Category Health" subtitle="AI assessment of your spending categories" className="mb-8">
+          <div className="space-y-4">
+            {aiInsights.categoryHealth.map((health) => (
+              <div 
+                key={health.category}
+                className={`p-4 rounded-lg border-l-4 ${
+                  health.status === 'good' ? 'bg-green-50 dark:bg-green-900/10 border-l-green-500' :
+                  health.status === 'warning' ? 'bg-amber-50 dark:bg-amber-900/10 border-l-amber-500' :
+                  'bg-red-50 dark:bg-red-900/10 border-l-red-500'
+                }`}
+              >
+                <div className="flex items-start justify-between">
+                  <div className="flex-1">
+                    <div className="flex items-center gap-3 mb-2">
+                      {health.status === 'good' ? <CheckCircle className="text-green-600 dark:text-green-400" size={24} /> :
+                       health.status === 'warning' ? <AlertTriangle className="text-amber-600 dark:text-amber-400" size={24} /> :
+                       <AlertTriangle className="text-red-600 dark:text-red-400" size={24} />}
+                      <h3 className="font-semibold text-zinc-900 dark:text-zinc-100 capitalize text-lg">
+                        {health.category}
+                      </h3>
+                      <span className={`text-xs px-2 py-1 rounded-full font-medium uppercase ${
+                        health.status === 'good' ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300' :
+                        health.status === 'warning' ? 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300' :
+                        'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300'
+                      }`}>
+                        {health.status}
+                      </span>
+                    </div>
+                    <p className="text-sm text-zinc-600 dark:text-zinc-400 mb-2">
+                      {health.reason}
+                    </p>
+                    <p className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
+                      💡 {health.recommendation}
+                    </p>
+                  </div>
+                  <div className="text-right ml-4">
+                    <p className="text-sm text-zinc-500 dark:text-zinc-400">Spent</p>
+                    <p className="text-xl font-bold text-zinc-900 dark:text-zinc-100">
+                      {formatCurrency(health.spending)}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
       
       {/* Key Insights */}
       <div className="mb-8">
@@ -226,51 +500,54 @@ export default function InsightsPage() {
         </Card>
       </div>
       
-      {/* Recommendations */}
+      {/* Savings Opportunities */}
       <Card 
-        title="Smart Recommendations" 
-        subtitle="Personalized tips to improve your finances"
+        title="Savings Opportunities" 
+        subtitle="AI-powered recommendations to save money"
         className="bg-gradient-to-br from-blue-50 to-purple-50 dark:from-blue-900/10 dark:to-purple-900/10"
       >
         <div className="space-y-4">
-          <div className="flex items-start gap-3 p-4 bg-white/50 dark:bg-zinc-900/50 rounded-lg">
-            <CheckCircle className="text-green-600 dark:text-green-400 mt-1 flex-shrink-0" size={20} />
-            <div>
-              <h4 className="font-medium text-zinc-900 dark:text-zinc-100 mb-1">
-                Set Savings Goals
-              </h4>
-              <p className="text-sm text-zinc-600 dark:text-zinc-400">
-                Based on your income and expenses, you can save approximately {formatCurrency(10000)} per month. 
-                Consider setting up automatic transfers to a savings account.
-              </p>
+          {aiInsights.savingsOpportunities.map((opportunity, idx) => (
+            <div key={idx} className="flex items-start gap-3 p-4 bg-white/50 dark:bg-zinc-900/50 rounded-lg">
+              <Lightbulb className="text-amber-600 dark:text-amber-400 mt-1 flex-shrink-0" size={20} />
+              <div>
+                <p className="text-sm text-zinc-600 dark:text-zinc-400">
+                  {opportunity}
+                </p>
+              </div>
             </div>
-          </div>
-          
-          <div className="flex items-start gap-3 p-4 bg-white/50 dark:bg-zinc-900/50 rounded-lg">
-            <AlertTriangle className="text-amber-600 dark:text-amber-400 mt-1 flex-shrink-0" size={20} />
-            <div>
-              <h4 className="font-medium text-zinc-900 dark:text-zinc-100 mb-1">
-                Review Subscription Services
-              </h4>
-              <p className="text-sm text-zinc-600 dark:text-zinc-400">
-                Entertainment expenses are higher than average. Review your subscriptions and cancel those you don't use regularly.
-              </p>
-            </div>
-          </div>
-          
-          <div className="flex items-start gap-3 p-4 bg-white/50 dark:bg-zinc-900/50 rounded-lg">
-            <Info className="text-blue-600 dark:text-blue-400 mt-1 flex-shrink-0" size={20} />
-            <div>
-              <h4 className="font-medium text-zinc-900 dark:text-zinc-100 mb-1">
-                Track Daily Expenses
-              </h4>
-              <p className="text-sm text-zinc-600 dark:text-zinc-400">
-                Small daily expenses add up. Try logging every transaction to gain better awareness of your spending habits.
-              </p>
-            </div>
-          </div>
+          ))}
         </div>
       </Card>
+      
+      {/* Spending by Category */}
+      {aiInsights.spendingPatterns.length > 0 && (
+        <Card title="Spending by Category" subtitle="Your expense breakdown" className="mt-8">
+          <div className="space-y-4">
+            {aiInsights.spendingPatterns.map((pattern) => (
+              <div key={pattern.category} className="space-y-2">
+                <div className="flex justify-between items-center">
+                  <span className="font-medium text-zinc-900 dark:text-zinc-100 capitalize">
+                    {pattern.category}
+                  </span>
+                  <span className="text-zinc-600 dark:text-zinc-400">
+                    {formatCurrency(pattern.totalAmount)} ({pattern.percentage.toFixed(1)}%)
+                  </span>
+                </div>
+                <div className="w-full bg-zinc-200 dark:bg-zinc-700 rounded-full h-2">
+                  <div
+                    className="bg-blue-600 dark:bg-blue-400 h-2 rounded-full transition-all"
+                    style={{ width: `${Math.min(pattern.percentage, 100)}%` }}
+                  />
+                </div>
+                <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                  {pattern.transactionCount} transactions • Avg: {formatCurrency(pattern.averageAmount)}
+                </p>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
     </div>
   );
 }
